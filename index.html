@@ -171,7 +171,8 @@ function livePlayers() {
   }
   return out.sort();
 }
-const isHost = () => livePlayers()[0] === net.sessionId;
+let hostHold = 0, lastTick = performance.now(); // lastTick: when frame() last ran; hostHold: after a freeze, no hosting before this time (see frame())
+const isHost = () => performance.now() > hostHold && performance.now() - lastTick < 1000 && livePlayers()[0] === net.sessionId; // a tab whose loop has stopped doesn't host
 const isBot = (id) => id[0] === "@"; // bot ids look like "@3"; sessionIds never have an @
 
 // ── SCENE ───────────────────────────────────────────────────────────────────────────
@@ -724,6 +725,8 @@ let last = performance.now(), lastHb = 0, lastHud = 0;
 const camPos = new THREE.Vector3(0, 16, 20), camLook = new THREE.Vector3();
 function frame(now) {
   requestAnimationFrame(frame);
+  if (performance.now() - lastTick > 1000) { hostHold = performance.now() + 700; host.wasHost = false; } // the tab was frozen or in the background: someone else may have hosted meanwhile, so let its state arrive, then adopt it
+  lastTick = performance.now(); // not the rAF time: after a long freeze Chrome can stamp the first frame from before it ended
   const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
   if (isHost()) hostTick(dt); else host.wasHost = false;
