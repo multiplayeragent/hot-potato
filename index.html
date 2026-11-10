@@ -1,0 +1,835 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hot Potato</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #8fd6ff; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0009; font-weight: 800; }
+  #top { top: max(10px, env(safe-area-inset-top)); left: 0; right: 0; text-align: center; font-size: 20px; padding: 0 12px; }
+  #top small { display: block; font-size: 14px; font-weight: 700; opacity: .92; }
+  #top.hot { color: #ffd23f; }
+  #big { inset: 0; display: grid; place-items: center; text-align: center; font-size: min(14vw, 96px); line-height: 1.05; color: #ffd23f; -webkit-text-stroke: 3px #8a2c12; padding: 0 12px; }
+  #big small { display: block; font-size: min(5vw, 24px); color: #fff; -webkit-text-stroke: 0; margin-bottom: 8px; }
+  #big .name { font-size: min(9vw, 64px); }
+  #msg { top: calc(max(10px, env(safe-area-inset-top)) + 58px); left: 16px; right: 16px; text-align: center; font-size: 16px; }
+  #arrow { width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; background: #ff3b2fcc; border: 3px solid #fff; display: grid; place-items: center; font-size: 22px; text-shadow: none; }
+  #arrow[hidden] { display: none; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .85; white-space: nowrap; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #1d3a2a66; }
+  #over[hidden], #stick[hidden], #dash[hidden] { display: none; }
+  .card { width: min(380px, 90vw); max-height: 84vh; overflow: auto; padding: 20px; border-radius: 18px; background: #2f4a2a; border: 2px solid #ffffff33; box-sizing: border-box; }
+  .card h2 { margin: 0 0 8px; font-size: 22px; color: #ffd23f; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffb27a; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li.me { color: #ffd23f; font-weight: 700; }
+  .card p { margin: 10px 0; font-size: 13px; opacity: .85; }
+  button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd23f; color: #3a2410; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  #stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: #ffffff22; border: 2px solid #ffffff77; pointer-events: none; }
+  #stick i { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: #ffffffaa; }
+  #dash { position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(26px, env(safe-area-inset-bottom)); width: 92px; height: 92px; border-radius: 50%;
+          border: 3px solid #ffffffaa; background: #ff6b4a99; color: #fff; font: 800 16px system-ui, sans-serif; touch-action: none; }
+  #dash.on { background: #ffd23fcc; color: #3a2410; }
+  #dash.wait { opacity: .45; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="top"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="big"></div>
+<div class="hud" id="arrow" hidden>🥔</div>
+<div class="hud" id="net">Connecting…</div>
+<div id="stick" hidden><i></i></div>
+<button id="dash" hidden>DASH</button>
+<div id="over" hidden><div class="card">
+  <h2 id="title">Game over</h2><ol id="results"></ol>
+  <h3>Most wins</h3><ol id="board"><li>Loading…</li></ol>
+  <p id="next"></p>
+  <button class="go" id="again">Play again</button>
+</div></div>
+<script type="module">
+/* ═══ HOT POTATO · a Multiplayer Agent starter ═══════════════════════════════════════
+ * Pass the ticking potato. Don't hold it when it blows. Party, 3–8; bots fill the garden.
+ * Touch someone to pass the potato. Whoever holds it at the bang is out; last one left wins.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ fuse times, pass rules, movement, the blast, bots
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   SCENE ......... renderer, sky, lights, particles, sounds
+ *   GARDEN ........ the lawn, hedge, fountain and barrels (OBSTACLES: add one there)
+ *   CRITTERS ...... the player model, party hats, name tags, the potato and its glow
+ *   PHYSICS ....... running, dashing, bumping into the garden (same code for you and bots)
+ *   GAME (HOST) ... dealing the potato, its fuse, passes, the bang, the winner, the bots.
+ *                   Only the host writes these.
+ *   ME ............ your critter. Each player writes only its own.
+ *   HUD & RESULTS . who has it, countdown, results card, leaderboard
+ *   INPUT ......... keyboard, touch stick and Dash button
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `p` (one packed JSON field: game id, position,
+ *     velocity, heading, animation) about 15 times a second, `hb` (heartbeat) once a
+ *     second, and `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `game` (id, v, phase,
+ *     who is in, who is out, the potato: number, holder, who passed it, when, when it
+ *     blows; the last bang; the winner) and `bots`. A new host adopts both and carries on;
+ *     an overdue potato blows on its first tick.
+ *   - Passing is HOST-RUN: the host checks the holder against everyone (its own view: the
+ *     bots, itself, everyone else at their latest position). A holder who sees itself touch
+ *     someone also sends "tag" {to, n}; the host checks it is close enough and passes.
+ *   - The bang lands in state (`bang`: number, who, where). Each player sees the number
+ *     change, shows the blast and knocks ITSELF back if it was close; the host knocks bots.
+ *   - "again" asks the host to start the next game sooner.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "potato-wins": games won (submitted with "inc"), on the results card.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 6,              // bots fill the garden up to this many players
+  startMs: 3500,         // countdown before the first potato
+  fuseMin: 9, fuseMax: 15, // seconds a potato burns (picked at random, nobody sees it)
+  fuseShrink: 0.5,       // with few players left the fuse is this much shorter (0 = never)
+  gapMs: 2600,           // pause after a bang before the next potato
+  noTagBack: 1500,       // ms before a potato can go back to the one who just passed it
+  passLock: 250,         // ms a new holder must hold it before passing again
+  touch: 1.3,            // how close two players must be to pass, units
+  resultsMs: 11000,      // results card before the next game
+  // running
+  speed: 7,              // running speed, units/s
+  holderBoost: 1.12,     // the holder runs this much faster
+  accel: 30,             // how quickly you reach full speed
+  dashSpeed: 15, dashTime: 0.22, dashCooldown: 2,
+  // the blast
+  blastRadius: 4.5, blastPush: 15, stunTime: 0.6,
+  // the garden
+  arenaR: 15,            // the hedge's radius
+  bodyR: 0.55,           // a player's radius
+  board: "potato-wins",
+};
+const BOT_NAMES = ["Fizz", "Pip", "Nugget", "Sprout", "Taffy", "Biscuit", "Jinx", "Pogo", "Zippy", "Mango", "Bean", "Waffle", "Pickle", "Dottie"];
+const COLORS = ["#ff4d6d", "#4dabff", "#ffd23f", "#b47dff", "#ff8c42", "#ff6fb5", "#3de0d0", "#f8fafc", "#60a5fa", "#e879f9", "#a3e635", "#22d3ee"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'hot-potato',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fallback) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fallback); memo.set(key, { raw, v }); return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} }, dropped = false;
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const isBot = (id) => id[0] === "@"; // bot ids look like "@3"; sessionIds never have an @
+
+// ── SCENE ───────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: !ATTRACT }); // the preview recorder renders in software: keep it cheap
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 400);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+scene.add(new THREE.HemisphereLight("#ffffff", "#7aa36a", 1.6));
+const sun = new THREE.DirectionalLight("#fff3d6", 1.6); sun.position.set(20, 40, 15); scene.add(sun);
+function canvasTex(w, h, paint, repeat) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+const mat = (color, extra) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...extra });
+const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), e3 = new THREE.Euler(), v3 = new THREE.Vector3(), one = new THREE.Vector3();
+scene.background = canvasTex(4, 256, (c, w, h) => { const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#58b6ff"); g.addColorStop(0.6, "#bfe6ff"); g.addColorStop(1, "#eaf7ff"); c.fillStyle = g; c.fillRect(0, 0, w, h); });
+scene.fog = new THREE.Fog("#d6efff", 50, 130);
+// sparks, smoke and confetti: a ring buffer of little squares
+const PARTS = 360, parts = Array.from({ length: PARTS }, () => ({ life: 0 }));
+const partMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.26, 0.26), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), PARTS);
+partMesh.setColorAt(0, new THREE.Color("#fff")); partMesh.frustumCulled = false; scene.add(partMesh);
+let nextPart = 0;
+function burst(x, y, z, color, n = 14, speed = 6, up = 1, life = 1) {
+  const c = new THREE.Color(color);
+  for (let i = 0; i < n; i++) {
+    const p = parts[nextPart]; partMesh.setColorAt(nextPart, c); nextPart = (nextPart + 1) % PARTS;
+    Object.assign(p, { x, y, z, vx: (Math.random() - 0.5) * speed, vy: Math.random() * speed * up, vz: (Math.random() - 0.5) * speed, life: (0.6 + Math.random() * 0.6) * life, r: Math.random() * 6 });
+  }
+  partMesh.instanceColor.needsUpdate = true;
+}
+function drawParts(dt) {
+  parts.forEach((p, i) => {
+    if (p.life > 0) { p.life -= dt; p.vy -= 12 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.r += dt * 6; if (p.y < 0.05) { p.y = 0.05; p.vy *= -0.3; p.vx *= 0.8; p.vz *= 0.8; } }
+    const s = p.life > 0 ? Math.min(1, p.life * 2) : 0;
+    partMesh.setMatrixAt(i, mtx.compose(v3.set(p.x || 0, p.y || 0, p.z || 0), q.setFromEuler(e3.set(p.r || 0, (p.r || 0) * 0.7, 0)), one.set(s, s, s)));
+  });
+  partMesh.instanceMatrix.needsUpdate = true;
+}
+// Sounds, made on the fly with WebAudio (no files).
+let audio = null, noise = null;
+function unlockAudio() {
+  if (audio || ATTRACT) return;
+  try {
+    audio = new AudioContext();
+    noise = audio.createBuffer(1, audio.sampleRate * 0.8, audio.sampleRate);
+    const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  } catch {}
+}
+function sfx(kind, power = 1) {
+  if (!audio) return;
+  const t = audio.currentTime, gain = audio.createGain();
+  if (kind === "boom") {
+    const src = audio.createBufferSource(), f = audio.createBiquadFilter(); src.buffer = noise; f.type = "lowpass"; f.frequency.setValueAtTime(1200, t); f.frequency.exponentialRampToValueAtTime(80, t + 0.7);
+    gain.gain.setValueAtTime(0.6 * power, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+    src.connect(f).connect(gain).connect(audio.destination); src.start(t); src.stop(t + 0.8); return;
+  }
+  const o = audio.createOscillator();
+  const [type, f0, f1, len, vol] = { tick: ["square", 1800, 1500, 0.03, 0.05 * power], pass: ["triangle", 500, 1100, 0.12, 0.2], dash: ["triangle", 300, 700, 0.12, 0.1], beep: ["square", 520, 520, 0.12, 0.08], go: ["square", 780, 780, 0.3, 0.1], win: ["triangle", 520, 1040, 0.45, 0.2] }[kind];
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len);
+  gain.gain.setValueAtTime(vol, t); gain.gain.exponentialRampToValueAtTime(0.001, t + len);
+  o.connect(gain).connect(audio.destination); o.start(t); o.stop(t + len + 0.02);
+}
+
+// ── GARDEN ──────────────────────────────────────────────────────────────────────────
+// Round things you can't walk through: { x, z, r }. The first is the fountain.
+const OBSTACLES = [{ x: 0, z: 0, r: 2.6 }, ...Array.from({ length: 6 }, (_, i) => { const a = (i / 6) * Math.PI * 2 + Math.PI / 6; return { x: Math.cos(a) * 8.6, z: Math.sin(a) * 8.6, r: 0.95 }; })];
+(function buildGarden() {
+  const lawn = canvasTex(256, 256, (c, w, h) => { for (let i = 0; i < 8; i++) { c.fillStyle = i % 2 ? "#7fcf5f" : "#8ad86a"; c.fillRect(0, (i * h) / 8, w, h / 8); } c.fillStyle = "#6fc054"; for (let i = 0; i < 300; i++) c.fillRect((i * 97) % w, (i * 57) % h, 2, 3); }, true);
+  lawn.repeat.set(5, 5);
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(CONFIG.arenaR + 0.5, 64).rotateX(-Math.PI / 2), mat("#ffffff", { map: lawn }));
+  scene.add(ground);
+  const outside = new THREE.Mesh(new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2), mat("#6db552")); outside.position.y = -0.05; scene.add(outside);
+  const path = new THREE.Mesh(new THREE.RingGeometry(3.2, 4.6, 48).rotateX(-Math.PI / 2), mat("#e9d3a6")); path.position.y = 0.02; scene.add(path);
+  // the fountain
+  const stone = mat("#d9d2c5", { roughness: 0.9 });
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.8, 0.8, 32), stone); basin.position.y = 0.4; scene.add(basin);
+  const water = new THREE.Mesh(new THREE.CircleGeometry(2.25, 32).rotateX(-Math.PI / 2), mat("#5cc8ff", { emissive: "#2a8fd0", emissiveIntensity: 0.4, roughness: 0.2 })); water.position.y = 0.82; scene.add(water);
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 1.8, 16), stone); column.position.y = 1.4; scene.add(column);
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 0.4, 0.4, 24), stone); bowl.position.y = 2.4; scene.add(bowl);
+  // barrels (one instanced mesh)
+  const wood = canvasTex(64, 64, (c) => { c.fillStyle = "#b5703c"; c.fillRect(0, 0, 64, 64); c.fillStyle = "#9a5a2c"; for (let x = 0; x < 64; x += 8) c.fillRect(x, 0, 2, 64); c.fillStyle = "#5b5b66"; c.fillRect(0, 10, 64, 5); c.fillRect(0, 49, 64, 5); });
+  const barrels = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.85, 0.85, 1.5, 18), mat("#ffffff", { map: wood }), 6);
+  OBSTACLES.slice(1).forEach((o, i) => barrels.setMatrixAt(i, mtx.compose(v3.set(o.x, 0.75, o.z), q.identity(), one.set(1, 1, 1))));
+  scene.add(barrels);
+  // the hedge all round, with flowers on top, and trees beyond it
+  const N = 72, hedge = new THREE.InstancedMesh(new THREE.BoxGeometry(1.5, 1.4, 1.3), mat("#3f9a3c"), N);
+  const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 8, 6), mat("#ffffff", { roughness: 0.5 }), N * 2), fc = ["#ff6fb5", "#ffd23f", "#ffffff", "#ff8c42"];
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2, r = CONFIG.arenaR + 0.75;
+    hedge.setMatrixAt(i, mtx.compose(v3.set(Math.cos(a) * r, 0.7, Math.sin(a) * r), q.setFromEuler(e3.set(0, -a, 0)), one.set(1, 1 + (i % 3) * 0.06, 1)));
+    for (let k = 0; k < 2; k++) { flowers.setMatrixAt(i * 2 + k, mtx.compose(v3.set(Math.cos(a + k * 0.04) * (r - 0.3 + k * 0.5), 1.45, Math.sin(a + k * 0.04) * (r - 0.3 + k * 0.5)), q.identity(), one.set(1, 1, 1))); flowers.setColorAt(i * 2 + k, new THREE.Color(fc[(i + k * 3) % 4])); }
+  }
+  scene.add(hedge, flowers);
+  const T = 26, trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.35, 0.45, 2.2, 8), mat("#8a5a34"), T), crowns = new THREE.InstancedMesh(new THREE.SphereGeometry(2, 12, 10), mat("#4fae4a", { flatShading: true }), T);
+  for (let i = 0; i < T; i++) {
+    const a = (i / T) * Math.PI * 2 + (i % 2) * 0.1, r = CONFIG.arenaR + 5 + (i % 3) * 3.5, s = 0.8 + (i % 4) * 0.15;
+    trunks.setMatrixAt(i, mtx.compose(v3.set(Math.cos(a) * r, 1.1 * s, Math.sin(a) * r), q.identity(), one.set(s, s, s)));
+    crowns.setMatrixAt(i, mtx.compose(v3.set(Math.cos(a) * r, 3.4 * s, Math.sin(a) * r), q.identity(), one.set(s, s * 1.1, s)));
+  }
+  scene.add(trunks, crowns);
+})();
+
+// ── CRITTERS ────────────────────────────────────────────────────────────────────────
+const BR = CONFIG.bodyR;
+const bodyGeo = new THREE.CapsuleGeometry(BR, 0.4, 6, 16), eyeGeo = new THREE.SphereGeometry(0.15, 12, 8), pupilGeo = new THREE.SphereGeometry(0.08, 8, 6);
+const footGeo = new THREE.SphereGeometry(0.16, 10, 8).scale(1, 0.7, 1.3), hatGeo = new THREE.ConeGeometry(0.34, 0.75, 14), pomGeo = new THREE.SphereGeometry(0.12, 8, 6);
+const white = mat("#ffffff", { roughness: 0.3 }), dark = new THREE.MeshBasicMaterial({ color: "#1b1030" }), footMat = mat("#3a2a4a");
+const hatTex = canvasTex(64, 64, (c) => { c.fillStyle = "#ffffff"; c.fillRect(0, 0, 64, 64); c.fillStyle = "#ff5b8a"; for (let y = 0; y < 64; y += 16) c.fillRect(0, y, 64, 8); });
+const shadowGeo = new THREE.CircleGeometry(0.6, 18).rotateX(-Math.PI / 2), shadowMat = new THREE.MeshBasicMaterial({ color: "#000", transparent: true, opacity: 0.25, depthWrite: false });
+const crownGeo = new THREE.CylinderGeometry(0.36, 0.28, 0.36, 5, 1, true), crownMat = mat("#ffd23f", { metalness: 0.6, roughness: 0.25, emissive: "#a06a00", side: THREE.DoubleSide });
+function makeCritter(color, name) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const skin = mat(color, { roughness: 0.45 });
+  const torso = new THREE.Mesh(bodyGeo, skin); torso.position.y = BR + 0.2 + 0.12; body.add(torso);
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeo, white); eye.position.set(s * 0.2, 0.98, 0.42); body.add(eye);
+    const pupil = new THREE.Mesh(pupilGeo, dark); pupil.position.set(s * 0.2, 0.98, 0.54); body.add(pupil);
+  }
+  const feet = [-1, 1].map((s) => { const f = new THREE.Mesh(footGeo, footMat); f.position.set(s * 0.24, 0.1, 0.05); g.add(f); return f; });
+  const hat = new THREE.Mesh(hatGeo, mat("#ffffff", { map: hatTex })); hat.position.set(0.08, 1.66, -0.02); hat.rotation.z = -0.18; body.add(hat);
+  const pom = new THREE.Mesh(pomGeo, mat("#ffd23f")); pom.position.set(0.15, 2.05, -0.02); body.add(pom);
+  const crown = new THREE.Mesh(crownGeo, crownMat); crown.position.y = 1.55; crown.visible = false; body.add(crown);
+  if (name && !ATTRACT) {
+    const tex = canvasTex(256, 64, (c) => { c.font = "bold 32px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000a"; c.strokeText(name, 128, 44); c.fillStyle = "#fff"; c.fillText(name, 128, 44); });
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false })); tag.scale.set(3, 0.75, 1); tag.position.y = 2.45; g.add(tag);
+  }
+  const shadow = new THREE.Mesh(shadowGeo, shadowMat); scene.add(shadow, g);
+  return { g, body, skin, feet, hat, pom, crown, shadow, color, x: 0, z: 0, h: 0, a: 0, fresh: true, step: 0 };
+}
+function recolor(v, color) { if (v.color !== color) { v.color = color; v.skin.color.set(color); } }
+const views = new Map(); // id -> drawn critter, for everyone but me
+/** Draw a critter at (x, z) facing h, eased toward it if `ease`; a = 0 idle, 1 run, 2 dash, 3 knocked. */
+function drawCritter(v, x, z, h, a, dt, ease) {
+  if (v.fresh || !ease) { v.x = x; v.z = z; v.h = h; v.fresh = false; }
+  const k = 1 - Math.pow(0.0005, dt);
+  v.x += (x - v.x) * k; v.z += (z - v.z) * k; v.h += Math.atan2(Math.sin(h - v.h), Math.cos(h - v.h)) * k;
+  v.g.visible = true; v.g.position.set(v.x, 0, v.z); v.g.rotation.y = v.h;
+  v.step += dt * (a === 1 ? 14 : a === 2 ? 22 : 0);
+  const s = Math.sin(v.step);
+  v.feet[0].position.z = 0.05 + (a === 1 || a === 2 ? s * 0.22 : 0); v.feet[1].position.z = 0.05 - (a === 1 || a === 2 ? s * 0.22 : 0);
+  v.body.position.y = a === 1 || a === 2 ? Math.abs(s) * 0.12 : 0;
+  v.body.rotation.x = a === 2 ? 0.35 : a === 1 ? 0.1 : 0;
+  v.body.rotation.z = a === 3 ? Math.sin(performance.now() / 50) * 0.4 : 0;
+  v.shadow.visible = true; v.shadow.position.set(v.x, 0.03, v.z);
+}
+function hideCritter(v) { v.g.visible = false; v.shadow.visible = false; }
+// The hot potato: a lumpy potato with a fuse, hovering over the holder's head; it glows as the fuse runs down.
+const potato = new THREE.Group(); potato.scale.setScalar(1.35);
+const spudTex = canvasTex(128, 64, (c) => { c.fillStyle = "#c58a4e"; c.fillRect(0, 0, 128, 64); c.fillStyle = "#9c6534"; for (let i = 0; i < 14; i++) { c.beginPath(); c.ellipse((i * 41) % 128, (i * 23) % 64, 3, 2, 0, 0, 7); c.fill(); } });
+const spudMat = mat("#ffffff", { map: spudTex, emissive: "#ff2a00", emissiveIntensity: 0, roughness: 0.8 });
+const spud = new THREE.Mesh(new THREE.SphereGeometry(0.42, 18, 14).scale(1.25, 0.85, 0.95), spudMat); potato.add(spud);
+const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.35, 6), mat("#3a2a1a")); fuse.position.set(0.15, 0.48, 0); fuse.rotation.z = -0.4; potato.add(fuse);
+const spark = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), new THREE.MeshBasicMaterial({ color: "#ffe066" })); spark.position.set(0.24, 0.67, 0); potato.add(spark);
+const glowRing = new THREE.Mesh(new THREE.RingGeometry(0.75, 1.05, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#ff3b2f", transparent: true, opacity: 0.6, depthWrite: false }));
+glowRing.position.y = 0.04; potato.visible = glowRing.visible = false; scene.add(potato, glowRing);
+const blastRing = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#fff1b0", transparent: true, depthWrite: false }));
+const fireball = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), new THREE.MeshBasicMaterial({ color: "#ffb02e", transparent: true, depthWrite: false }));
+blastRing.visible = fireball.visible = false; scene.add(blastRing, fireball);
+
+// ── PHYSICS ─────────────────────────────────────────────────────────────────────────
+const newBody = () => ({ x: 0, z: 0, vx: 0, vz: 0, h: 0, a: 0, dashT: 0, dashCd: 0, stun: 0,
+  pace: 1, skill: 0.9, target: "", retarget: 0, fleeA: 0, errAt: 0, err: 0, wanderA: 0 });
+/** One step for a critter (yours or a bot's): input mx/mz in -1..1, dash true/false, speed multiplier. */
+function stepBody(b, mx, mz, dash, dt, boost = 1) {
+  const len = Math.hypot(mx, mz); if (len > 1) { mx /= len; mz /= len; }
+  b.dashT = Math.max(0, b.dashT - dt); b.dashCd = Math.max(0, b.dashCd - dt); b.stun = Math.max(0, b.stun - dt);
+  if (dash && b.dashCd <= 0 && b.stun <= 0) {
+    const dx = len > 0.2 ? mx : Math.sin(b.h), dz = len > 0.2 ? mz : Math.cos(b.h), dl = Math.hypot(dx, dz) || 1;
+    b.vx = (dx / dl) * CONFIG.dashSpeed; b.vz = (dz / dl) * CONFIG.dashSpeed; b.dashT = CONFIG.dashTime; b.dashCd = CONFIG.dashCooldown;
+    if (b === me) sfx("dash");
+  }
+  if (b.dashT <= 0) {
+    const k = Math.min(1, CONFIG.accel * (b.stun > 0 ? 0.08 : 1) * dt), top = CONFIG.speed * boost;
+    b.vx += (mx * top - b.vx) * k; b.vz += (mz * top - b.vz) * k;
+  }
+  b.x += b.vx * dt; b.z += b.vz * dt;
+  hitGarden(b);
+  const sp = Math.hypot(b.vx, b.vz);
+  if (sp > 0.5 && b.stun <= 0) b.h += Math.atan2(Math.sin(Math.atan2(b.vx, b.vz) - b.h), Math.cos(Math.atan2(b.vx, b.vz) - b.h)) * Math.min(1, 14 * dt);
+  b.a = b.stun > 0 ? 3 : b.dashT > 0 ? 2 : sp > 0.8 ? 1 : 0;
+}
+/** Keep a body out of the fountain, the barrels and the hedge (sliding along them). */
+function hitGarden(b) {
+  for (const o of OBSTACLES) {
+    const dx = b.x - o.x, dz = b.z - o.z, d = Math.hypot(dx, dz), min = o.r + BR;
+    if (d < min && d > 1e-4) { const nx = dx / d, nz = dz / d, vn = b.vx * nx + b.vz * nz; b.x = o.x + nx * min; b.z = o.z + nz * min; if (vn < 0) { b.vx -= vn * nx; b.vz -= vn * nz; } }
+  }
+  const r = Math.hypot(b.x, b.z), max = CONFIG.arenaR - BR;
+  if (r > max) { const nx = b.x / r, nz = b.z / r, vn = b.vx * nx + b.vz * nz; b.x = nx * max; b.z = nz * max; if (vn > 0) { b.vx -= vn * nx; b.vz -= vn * nz; } }
+}
+/** Push body b out of the others ({x, z}) so critters don't stand inside each other. */
+function separate(b, others) {
+  for (const o of others) {
+    const dx = b.x - o.x, dz = b.z - o.z, d = Math.hypot(dx, dz);
+    if (d < 2 * BR && d > 1e-4) { const push = (2 * BR - d) * 0.5; b.x += (dx / d) * push; b.z += (dz / d) * push; }
+  }
+}
+/** A blast at (x, z) knocks this body away if it was close. */
+function blastPush(b, x, z) {
+  const dx = b.x - x, dz = b.z - z, d = Math.hypot(dx, dz);
+  if (d > CONFIG.blastRadius) return false;
+  const f = CONFIG.blastPush * (1 - d / CONFIG.blastRadius) + 3, a = d > 0.01 ? Math.atan2(dz, dx) : Math.random() * 7;
+  b.vx = Math.cos(a) * f; b.vz = Math.sin(a) * f; b.stun = CONFIG.stunTime; b.dashT = 0;
+  return true;
+}
+const spawnAt = (i, n) => { const a = -Math.PI / 2 + (i / Math.max(1, n)) * Math.PI * 2; return { x: Math.cos(a) * 11.5, z: Math.sin(a) * 11.5, h: Math.atan2(-Math.cos(a), -Math.sin(a)) }; };
+const blocked = (x, z) => Math.hypot(x, z) > CONFIG.arenaR - 1.3 || OBSTACLES.some((o) => Math.hypot(x - o.x, z - o.z) < o.r + 0.8);
+
+// ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { bots: new Map(), wasHost: false, last: null, id: -1, lastBots: 0 };
+/** The game as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function game() { const g = shared("game", null); return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g; }
+function writeGame(g) {
+  g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; net.setShared("game", JSON.stringify(g));
+  return g;
+}
+const aliveIn = (g) => g.inRound.filter((id) => !g.out.includes(id));
+const rosterName = (g, id) => (g.roster.find((r) => r[0] === id) || [id, "Player"])[1];
+
+function hostTick(dt) {
+  if (!host.wasHost) adopt();
+  let g = game();
+  const now = Date.now();
+  if (!g) g = newGame(1);
+  if (g.phase === "play") {
+    g = dropLeavers(g, now);
+    if (g.phase === "play" && !g.bomb && now >= g.nextAt) g = dealPotato(g, now);
+    else if (g.phase === "play" && g.bomb && now >= g.bomb.b) g = blowUp(g, now); // an overdue potato blows at once
+  } else if (g.phase === "results" && now >= g.endsAt) g = newGame(g.id + 1);
+  const bodies = hostBodies(g);
+  botsTick(dt, g, bodies);
+  if (g.phase === "play" && g.bomb) checkPasses(g, bodies, now);
+}
+/** Become host: take over the bots exactly as state has them. */
+function adopt() {
+  host.wasHost = true; host.bots.clear(); host.id = game()?.id ?? -1;
+  for (const b of shared("bots", [])) host.bots.set(b.i, { ...newBody(), id: b.i, name: b.n, color: b.c, x: b.x, z: b.z, vx: b.vx, vz: b.vz, h: b.h, ...botTraits() });
+}
+const botTraits = () => ({ pace: 0.84 + Math.random() * 0.14, skill: 0.55 + Math.random() * 0.4 });
+function syncBots(want, humans) {
+  const used = new Set(humans.map(colorOf));
+  for (const b of host.bots.values()) { if (used.has(b.color)) b.color = COLORS.find((c) => !used.has(c)) || b.color; used.add(b.color); }
+  for (let i = 1; host.bots.size < want && i < 64; i++) if (!host.bots.has("@" + i)) {
+    const color = COLORS.find((c) => !used.has(c)) || COLORS[i % COLORS.length]; used.add(color);
+    host.bots.set("@" + i, { ...newBody(), id: "@" + i, name: BOT_NAMES[(i - 1) % BOT_NAMES.length], color, ...botTraits() });
+  }
+  while (host.bots.size > Math.max(0, want)) host.bots.delete([...host.bots.keys()].pop());
+}
+/** A new game: everyone live plus bots up to the seats. The first potato comes after the countdown. */
+function newGame(id) {
+  const humans = livePlayers(), now = Date.now();
+  syncBots(CONFIG.seats - humans.length, humans);
+  const inRound = [...humans, ...host.bots.keys()];
+  return writeGame({ id, phase: "play", startAt: now + CONFIG.startMs, nextAt: now + CONFIG.startMs, inRound, out: [],
+    roster: inRound.map((id) => [id, nameOf(id), colorOf(id)]), bomb: null, bn: 0, bang: null, win: null, endedAt: 0, endsAt: 0 });
+}
+/** Players who closed their tab are out (no bang). A holder who left takes the potato with it. */
+function dropLeavers(g, now) {
+  const live = livePlayers(), gone = aliveIn(g).filter((id) => !isBot(id) && !live.includes(id));
+  if (!gone.length) return g;
+  const lost = g.bomb && gone.includes(g.bomb.h);
+  return checkWinner(writeGame({ ...g, out: [...g.out, ...gone], bomb: lost ? null : g.bomb, nextAt: lost ? now + 1500 : g.nextAt }), now);
+}
+function checkWinner(g, now) {
+  const left = aliveIn(g);
+  if (left.length > 1) return g;
+  return writeGame({ ...g, phase: "results", bomb: null, win: left[0] || null, endedAt: now, endsAt: now + CONFIG.resultsMs });
+}
+/** Between potatoes: newcomers join in, then a random player gets a fresh potato with a secret fuse. */
+function dealPotato(g, now) {
+  const fresh = livePlayers().filter((id) => !g.inRound.includes(id));
+  if (fresh.length) g = { ...g, inRound: [...g.inRound, ...fresh], roster: [...g.roster, ...fresh.map((id) => [id, nameOf(id), colorOf(id)])] };
+  const alive = aliveIn(g);
+  if (alive.length < 2) return checkWinner(writeGame(g), now);
+  const crowd = Math.min(1, (alive.length - 2) / 4); // 0 with two left, 1 with six or more
+  const fuse = (CONFIG.fuseMin + Math.random() * (CONFIG.fuseMax - CONFIG.fuseMin)) * (1 - CONFIG.fuseShrink * (1 - crowd));
+  const h = alive[Math.floor(Math.random() * alive.length)];
+  return writeGame({ ...g, bn: g.bn + 1, bomb: { n: g.bn + 1, h, f: "", pa: now, b: now + Math.round(fuse * 1000) } });
+}
+/** The fuse ran out: the holder is out, the blast is written to state, nearby bots fly. */
+function blowUp(g, now) {
+  const id = g.bomb.h, body = hostBodies(g).find((o) => o.id === id)?.b || { x: 0, z: 0 };
+  const bang = { n: (g.bang?.n || 0) + 1, id, x: Math.round(body.x * 100) / 100, z: Math.round(body.z * 100) / 100 };
+  for (const b of host.bots.values()) if (b.id !== id) blastPush(b, bang.x, bang.z);
+  return checkWinner(writeGame({ ...g, out: [...g.out, id], bomb: null, bang, nextAt: now + CONFIG.gapMs }), now);
+}
+/** Pass the potato to `to` if the rules allow it (host only). */
+function tryPass(g, to, now) {
+  const B = g.bomb;
+  if (!B || to === B.h || !aliveIn(g).includes(to) || now < B.pa + CONFIG.passLock || (to === B.f && now < B.pa + CONFIG.noTagBack)) return g;
+  return writeGame({ ...g, bomb: { ...B, h: to, f: B.h, pa: now } });
+}
+/** The host's pass check: is the holder touching anyone, as the host sees it? */
+function checkPasses(g, bodies, now) {
+  const holder = bodies.find((o) => o.id === g.bomb.h); if (!holder) return;
+  let best = null, bestD = CONFIG.touch;
+  for (const o of bodies) { if (o.id === holder.id) continue; const d = Math.hypot(o.b.x - holder.b.x, o.b.z - holder.b.z); if (d < bestD) { best = o; bestD = d; } }
+  if (best) tryPass(g, best.id, now);
+}
+/** A "tag" from the holder: it saw itself touch someone. Pass if the host has them close enough too. */
+function onTag(m, from) {
+  const g = game(), now = Date.now();
+  if (!g || g.phase !== "play" || !g.bomb || g.bomb.h !== from || m.n !== g.bomb.n) return;
+  const bodies = hostBodies(g), a = bodies.find((o) => o.id === from), b = bodies.find((o) => o.id === m.to);
+  if (a && b && Math.hypot(a.b.x - b.b.x, a.b.z - b.b.z) < CONFIG.touch + 1.4) tryPass(g, m.to, now);
+}
+
+/** Everyone still in, as the host sees them: its own critter, the bots, and everyone else at their
+ *  latest position moved on by their velocity. `local` ones the host moves itself. */
+function hostBodies(g) {
+  const alive = new Set(aliveIn(g)), out = [], now = performance.now();
+  if (alive.has(net.sessionId)) out.push({ id: net.sessionId, b: me, local: true });
+  for (const b of host.bots.values()) if (alive.has(b.id)) out.push({ id: b.id, b, local: true });
+  for (const id of alive) {
+    if (isBot(id) || id === net.sessionId) continue;
+    const r = remoteOf(id); if (!r || r.p.k !== g.id) continue;
+    const age = Math.min(0.15, (now - r.at) / 1000);
+    out.push({ id, b: { x: r.p.x + r.p.vx * age, z: r.p.z + r.p.vz * age, vx: r.p.vx, vz: r.p.vz }, local: false });
+  }
+  return out;
+}
+function botsTick(dt, g, bodies) {
+  if (host.id !== g.id) { // a new game: bots to their spots
+    host.id = g.id;
+    for (const b of host.bots.values()) Object.assign(b, spawnAt(Math.max(0, g.inRound.indexOf(b.id)), g.inRound.length), { vx: 0, vz: 0, stun: 0, dashT: 0, dashCd: 0, target: "" });
+  }
+  const alive = new Set(aliveIn(g)), others = bodies.map((o) => o.b);
+  for (const b of host.bots.values()) {
+    b.active = alive.has(b.id);
+    if (!b.active) continue;
+    const inp = g.phase === "play" && Date.now() >= g.startAt ? botBrain(b, b.id, g, bodies) : { mx: 0, mz: 0, dash: false };
+    stepBody(b, inp.mx, inp.mz, inp.dash, dt, g.bomb?.h === b.id ? CONFIG.holderBoost : 1);
+    separate(b, others.filter((o) => o !== b));
+  }
+  const now = performance.now();
+  if (now - host.lastBots > 90) { host.lastBots = now; net.setShared("bots", JSON.stringify(botList())); }
+}
+/** A bot's (or the ?attract autopilot's) input: chase someone if it holds the potato, run if the holder is close, else wander. */
+function botBrain(b, id, g, bodies) {
+  const now = performance.now(), B = g.bomb;
+  if (now > b.errAt) { b.errAt = now + 300 + Math.random() * 300; b.err = (Math.random() - 0.5) * (1 - b.skill) * 1.6; }
+  const holder = B && bodies.find((o) => o.id === B.h);
+  if (holder && B.h === id) return chase(b, id, B, bodies, now);
+  if (holder && Math.hypot(holder.b.x - b.x, holder.b.z - b.z) < 8 + b.skill * 3) return flee(b, holder.b, now);
+  if (!b.goal || Math.hypot(b.goal.x - b.x, b.goal.z - b.z) < 1 || now > b.goalUntil) { // wander, staying away from the potato
+    let gx, gz; do { const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 9; gx = Math.cos(a) * r; gz = Math.sin(a) * r; } while (blocked(gx, gz));
+    b.goal = { x: gx, z: gz }; b.goalUntil = now + 2500 + Math.random() * 2000;
+  }
+  return { ...steer(b, b.goal.x, b.goal.z, 0.55), dash: false };
+}
+function chase(b, id, B, bodies, now) {
+  const ok = (o) => o.id !== id && !(o.id === B.f && Date.now() < B.pa + CONFIG.noTagBack);
+  if (!bodies.some((o) => o.id === b.target && ok(o)) || now > b.retarget) {
+    const pick = bodies.filter(ok).map((o) => [o.id, Math.hypot(o.b.x - b.x, o.b.z - b.z) + Math.random() * 3]).sort((x, y) => x[1] - y[1])[0];
+    b.target = pick ? pick[0] : ""; b.retarget = now + 1200 + Math.random() * 1200;
+  }
+  const o = bodies.find((x) => x.id === b.target)?.b; if (!o) return { mx: 0, mz: 0, dash: false };
+  const d = Math.hypot(o.x - b.x, o.z - b.z), lead = Math.min(0.5, d / 14);
+  const mv = steer(b, o.x + (o.vx || 0) * lead, o.z + (o.vz || 0) * lead, 1);
+  return { ...mv, dash: d < 3.4 && d > 1.2 && Math.random() < 0.06 * b.skill };
+}
+/** Run from the holder: try 12 directions, take the one that ends furthest away without hitting the garden. */
+function flee(b, h, now) {
+  const hx = h.x + (h.vx || 0) * 0.4, hz = h.z + (h.vz || 0) * 0.4, d = Math.hypot(h.x - b.x, h.z - b.z);
+  if (now > (b.fleeAt || 0)) {
+    b.fleeAt = now + 180 + (1 - b.skill) * 350; // slower bots rethink less often
+    let best = -1e9, bestA = b.fleeA;
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2, px = b.x + Math.cos(a) * 3, pz = b.z + Math.sin(a) * 3;
+      const score = Math.hypot(px - hx, pz - hz) - (blocked(px, pz) ? 8 : 0) - (blocked(b.x + Math.cos(a) * 1.5, b.z + Math.sin(a) * 1.5) ? 8 : 0) + (Math.abs(a - b.fleeA) < 0.6 ? 0.6 : 0) + Math.random() * 0.8;
+      if (score > best) { best = score; bestA = a; }
+    }
+    b.fleeA = bestA + b.err;
+  }
+  const closing = ((h.vx || 0) * (b.x - h.x) + (h.vz || 0) * (b.z - h.z)) / (d || 1);
+  return { mx: Math.cos(b.fleeA) * b.pace, mz: Math.sin(b.fleeA) * b.pace, dash: d < 2.6 && closing > 2 && Math.random() < 0.1 * b.skill };
+}
+/** Head for (tx, tz), sliding round the fountain and barrels in the way. */
+function steer(b, tx, tz, pace) {
+  let dx = tx - b.x, dz = tz - b.z; const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
+  for (const o of OBSTACLES) {
+    const ox = o.x - b.x, oz = o.z - b.z, along = ox * dx + oz * dz, side = -ox * dz + oz * dx;
+    if (along > 0 && along < Math.min(d, 4.5) && Math.abs(side) < o.r + BR + 0.4) { const s = side > 0 ? 1.3 : -1.3, px = dz * s, pz = -dx * s; dx += px; dz += pz; } // sidestep away from it
+  }
+  const l = Math.hypot(dx, dz) || 1, p = pace * b.pace;
+  return { mx: (dx / l) * p, mz: (dz / l) * p };
+}
+function botList() {
+  if (!isHost()) return shared("bots", []);
+  const r2 = (v) => Math.round(v * 100) / 100;
+  return [...host.bots.values()].filter((b) => b.active).map((b) => ({ i: b.id, n: b.name, c: b.color, x: r2(b.x), z: r2(b.z), vx: r2(b.vx), vz: r2(b.vz), h: r2(b.h), a: b.a }));
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+let myName = "", myColor = COLORS[0]; // the color is picked on join: the first one nobody has
+try { myName = localStorage.getItem("mpa-name") || ""; } catch {}
+if (!myName) myName = ["Jolly", "Speedy", "Lucky", "Wiggly", "Sneaky", "Bouncy"][Math.floor(Math.random() * 6)] + " " + ["Spud", "Pickle", "Muffin", "Nugget", "Sprout"][Math.floor(Math.random() * 5)];
+const me = { ...newBody(), lastSend: 0, view: null, lastTag: 0 };
+const local = { gameId: -1, placed: -1, bigUntil: 0, big: "", shake: 0, lastBeep: 0, holder: "", bangN: 0, lastTick: 0, blastAt: -1e9, blastX: 0, blastZ: 0, potX: 0, potY: 0, potZ: 0 };
+const nameOf = (id) => (id === net.sessionId ? myName : isBot(id) ? host.bots.get(id)?.name || "Bot" : S.entities.players[id]?.n || "Player");
+const colorOf = (id) => (id === net.sessionId ? myColor : isBot(id) ? host.bots.get(id)?.color || "#ccc" : S.entities.players[id]?.c || "#ccc");
+const amIn = (g) => aliveIn(g).includes(net.sessionId);
+const remotes = new Map(); // id -> { raw, p, at }: everyone's latest `p`, and when it arrived (on our clock)
+function remoteOf(id) {
+  const raw = S.entities.players[id]?.p; if (typeof raw !== "string") return null;
+  let r = remotes.get(id);
+  if (!r || r.raw !== raw) { const p = parse(raw, null); if (!p) return null; r = { raw, p, at: performance.now() }; remotes.set(id, r); }
+  return r;
+}
+let botsSeen = { raw: "", at: 0 };
+
+/** Things everyone notices in state (never from events): a new game, a pass, a bang. */
+function watchState(g) {
+  if (g.id !== local.gameId) { local.gameId = g.id; local.bangN = g.bang?.n || 0; local.holder = g.bomb?.h || ""; $("over").hidden = true; for (const v of views.values()) v.fresh = true; }
+  const h = g.bomb?.h || "";
+  if (h !== local.holder) {
+    if (h && local.holder) { const v = h === net.sessionId ? me.view : views.get(h); if (v) burst(v.x, 2, v.z, "#ffe066", 10, 4); sfx("pass"); }
+    if (h === net.sessionId) bigText(local.holder ? "<small>Touch someone, quick!</small>YOU'VE GOT IT!" : "<small>Pass it on, quick!</small>HOT POTATO!", 1500);
+    local.holder = h;
+  }
+  if (g.bang && g.bang.n !== local.bangN) {
+    local.bangN = g.bang.n;
+    const { x, z, id } = g.bang;
+    burst(x, 1.2, z, "#ff8c1a", 40, 14, 1.2); burst(x, 1.2, z, "#ffe066", 24, 10, 1.4); burst(x, 1.5, z, "#5a5060", 18, 6, 1, 1.6);
+    const v = id === net.sessionId ? me.view : views.get(id); if (v) burst(x, 1, z, v.color, 16, 9, 1.5); // a few bits of whoever held it
+    Object.assign(local, { blastAt: performance.now(), blastX: x, blastZ: z });
+    if (amIn(g) && blastPush(me, x, z)) local.shake = 0.9; else local.shake = Math.max(local.shake, 0.35);
+    if (id === net.sessionId) { local.shake = 1.2; bigText("<small>It blew up in your hands</small>BOOM!", 2600); }
+    else if (g.phase === "play") bigText(`<small>BOOM!</small><span class="name">${esc(rosterName(g, id))} is out</span>`, 1800);
+    sfx("boom");
+  }
+}
+function myTick(dt, g) {
+  if (!amIn(g)) { publish(g.id, false); return; } // out, or waiting for the next game: watching
+  if (local.placed !== g.id) { local.placed = g.id; Object.assign(me, spawnAt(Math.max(0, g.inRound.indexOf(net.sessionId)), g.inRound.length), { vx: 0, vz: 0, stun: 0, dashT: 0, dashCd: 0 }); }
+  const playing = g.phase === "play" || g.win === net.sessionId;
+  const inp = !playing ? { mx: 0, mz: 0, dash: false } : ATTRACT ? (g.phase === "play" && Date.now() >= g.startAt ? botBrain(me, net.sessionId, g, hostBodies(g)) : { mx: 0, mz: 0, dash: false }) : readInput();
+  stepBody(me, inp.mx, inp.mz, inp.dash, dt, g.bomb?.h === net.sessionId ? CONFIG.holderBoost : 1);
+  separate(me, [...views.values()].filter((v) => v.g.visible));
+  // holding it? anyone I touch on my screen: ask the host to pass (it checks; the host itself checks in checkPasses)
+  if (g.bomb && g.bomb.h === net.sessionId && !isHost() && performance.now() - me.lastTag > 200) {
+    for (const [id, v] of views) if (v.g.visible && Math.hypot(v.x - me.x, v.z - me.z) < CONFIG.touch) { me.lastTag = performance.now(); net.send("tag", { to: id, n: g.bomb.n }); break; }
+  }
+  publish(g.id, true);
+}
+function publish(k, on) {
+  const now = performance.now();
+  if (now - me.lastSend < 66) return; // ~15/s
+  me.lastSend = now;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const json = JSON.stringify(on ? { k, x: r2(me.x), z: r2(me.z), vx: r2(me.vx), vz: r2(me.vz), h: r2(me.h), a: me.a } : { k: -1, x: 0, z: 0, vx: 0, vz: 0, h: 0, a: 0 });
+  if (json !== me.lastJson) { me.lastJson = json; net.me.set("p", json); } // standing still sends nothing
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const bigText = (html, ms) => { local.big = html; local.bigUntil = performance.now() + ms; };
+let board = null, boardFor = -1;
+const startedAt = performance.now();
+function hud(g) {
+  const now = Date.now(), left = aliveIn(g).length, toGo = (g.startAt - now) / 1000;
+  let big = performance.now() < local.bigUntil ? local.big : "";
+  if (g.phase === "play" && toGo > 0) big = toGo > 3 ? "<small>Get ready</small>HOT POTATO" : String(Math.ceil(toGo));
+  if (g.phase === "play" && toGo > 0 && toGo <= 3 && Math.ceil(toGo) !== local.lastBeep) { local.lastBeep = Math.ceil(toGo); sfx("beep"); }
+  if (g.phase === "play" && toGo <= 0 && local.lastBeep > 0) { local.lastBeep = 0; sfx("go"); }
+  $("big").innerHTML = ATTRACT ? "" : big;
+  if (ATTRACT) { $("top").textContent = $("msg").textContent = $("net").textContent = ""; return; }
+  const holder = g.bomb?.h, mine = holder === net.sessionId;
+  $("top").className = mine ? "hud hot" : "hud";
+  $("top").innerHTML = g.phase === "results" ? "" : !holder ? `${toGo > 0 ? "The potato comes out soon" : "Next potato coming…"}<small>${left} left · last one standing wins</small>`
+    : `${mine ? "🥔 YOU have the potato! Touch someone!" : `🥔 ${esc(rosterName(g, holder))} has the potato`}<small>${left} left · last one standing wins</small>`;
+  const watching = g.phase === "play" && !amIn(g);
+  $("msg").textContent = watching ? (g.inRound.includes(net.sessionId) ? "You're out · watching until the next game" : "Watching · you join at the next potato")
+    : performance.now() - startedAt < 15000 && g.phase === "play" ? (touchUI ? "Drag to run · tap DASH · don't hold the potato when it blows!" : "Run with WASD · Space to dash · don't hold the potato when it blows!") : "";
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the potato" : ""}`;
+  $("over").hidden = !(g.phase === "results" && now - g.endedAt > 1500);
+  if (g.phase === "results") results(g, now);
+}
+function results(g, now) {
+  $("title").textContent = g.win === net.sessionId ? "You're the last one standing! 🏆" : g.win ? `${rosterName(g, g.win)} wins! 🏆` : "Nobody's left!";
+  const order = [...(g.win ? [g.win] : []), ...[...g.out].reverse()];
+  $("results").innerHTML = order.slice(0, 10).map((id, i) => `<li class="${id === net.sessionId ? "me" : ""}">${esc(id === net.sessionId ? "You" : rosterName(g, id))}${id === g.win ? " 🏆" : ""}<span>${id === g.win ? "winner" : i === 1 ? "last out" : "out"}</span></li>`).join("");
+  $("next").textContent = `Next game in ${Math.max(0, Math.ceil((g.endsAt - now) / 1000))}s`;
+  if (boardFor !== g.id) { boardFor = g.id; showBoard(g.win === net.sessionId); if (g.win === net.sessionId) sfx("win"); }
+}
+function showBoard(won) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} 🏆</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => { const g = game(); if (!g || g.phase !== "results") return; if (isHost()) playAgain(g); else net.send("again", {}); $("over").hidden = true; };
+const playAgain = (g) => { if (g.phase === "results") writeGame({ ...g, endsAt: Math.min(g.endsAt, Date.now() + 1200) }); };
+/** Two players picked the same color at once (the joiner's first state can be empty): the later sessionId
+ *  picks again. A bot wearing my color makes me pick again too (the host only recolors bots between games). */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), botColors = botList().map((b) => b.c);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && !botColors.includes(myColor)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botColors]);
+  myColor = COLORS.find((c) => !taken.has(c)) || myColor; net.me.set("c", myColor);
+  if (me.view) recolor(me.view, myColor);
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("dash").hidden = !touchUI;
+const keys = new Set(), stick = { id: -1, x: 0, y: 0, mx: 0, mz: 0 };
+let dashAt = 0;
+addEventListener("keydown", (e) => {
+  unlockAudio(); keys.add(e.key.toLowerCase());
+  if (e.key === " " || e.key === "Shift") { e.preventDefault(); dashAt = performance.now(); }
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+function readInput() {
+  const k = (a, b) => (keys.has(a) || keys.has(b) ? 1 : 0);
+  const mx = k("d", "arrowright") - k("a", "arrowleft") + stick.mx, mz = k("s", "arrowdown") - k("w", "arrowup") + stick.mz;
+  return { mx, mz, dash: performance.now() - dashAt < 150 };
+}
+const cv = renderer.domElement;
+cv.addEventListener("pointerdown", (e) => {
+  unlockAudio();
+  if (e.pointerType === "mouse" || stick.id >= 0) return;
+  e.preventDefault(); cv.setPointerCapture(e.pointerId);
+  Object.assign(stick, { id: e.pointerId, x: e.clientX, y: e.clientY, mx: 0, mz: 0 });
+  Object.assign($("stick").style, { left: e.clientX + "px", top: e.clientY + "px" }); $("stick").hidden = false;
+});
+cv.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== stick.id) return;
+  const dx = e.clientX - stick.x, dy = e.clientY - stick.y, d = Math.hypot(dx, dy), k = Math.min(1, d / 50) / (d || 1);
+  stick.mx = dx * k; stick.mz = dy * k;
+  $("stick").firstElementChild.style.transform = `translate(${stick.mx * 35}px, ${stick.mz * 35}px)`;
+});
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerId === stick.id) { Object.assign(stick, { id: -1, mx: 0, mz: 0 }); $("stick").hidden = true; } });
+const db = $("dash");
+db.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); dashAt = performance.now(); db.classList.add("on"); });
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) db.addEventListener(ev, () => db.classList.remove("on"));
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0;
+const camPos = new THREE.Vector3(0, 16, 20), camLook = new THREE.Vector3();
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt); else host.wasHost = false;
+  const g = game();
+  if (g) { watchState(g); myTick(dt, g); drawWorld(dt, g, now); }
+  drawParts(dt);
+  renderer.render(scene, camera);
+  if (g && now - lastHud > 100) { lastHud = now; hud(g); }
+  db.classList.toggle("wait", me.dashCd > 0);
+  requestAnimationFrame(frame);
+}
+function drawWorld(dt, g, now) {
+  const seen = new Set(), pnow = performance.now(), live = livePlayers(), alive = new Set(aliveIn(g));
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId || !live.includes(id) || !alive.has(id)) continue;
+    const r = remoteOf(id);
+    if (!r || r.p.k !== g.id) continue;
+    seen.add(id);
+    if (!views.has(id)) views.set(id, makeCritter(p.c || "#ccc", p.n || "Player"));
+    const v = views.get(id), age = Math.min(0.12, (pnow - r.at) / 1000);
+    recolor(v, p.c || "#ccc");
+    drawCritter(v, r.p.x + r.p.vx * age, r.p.z + r.p.vz * age, r.p.h, r.p.a, dt, true);
+  }
+  const hosting = isHost(), raw = S.shared.bots;
+  if (!hosting && raw !== botsSeen.raw) botsSeen = { raw, at: pnow };
+  const age = hosting ? 0 : Math.min(0.12, (pnow - botsSeen.at) / 1000);
+  for (const b of botList()) {
+    if (!alive.has(b.i)) continue;
+    seen.add(b.i);
+    if (!views.has(b.i)) views.set(b.i, makeCritter(b.c, b.n));
+    const v = views.get(b.i); recolor(v, b.c);
+    drawCritter(v, b.x + (b.vx || 0) * age, b.z + (b.vz || 0) * age, b.h, b.a, dt, !hosting);
+  }
+  for (const [id, v] of views) { if (!seen.has(id)) hideCritter(v); v.crown.visible = g.phase === "results" && g.win === id; }
+  if (!me.view) me.view = makeCritter(myColor, "");
+  if (amIn(g)) drawCritter(me.view, me.x, me.z, me.h, me.a, dt, false); else hideCritter(me.view);
+  me.view.crown.visible = g.phase === "results" && g.win === net.sessionId;
+  if (g.phase === "results" && g.win && Math.random() < dt * 5) { const w = g.win === net.sessionId ? me.view : views.get(g.win); if (w) burst(w.x, 2.4, w.z, COLORS[Math.floor(Math.random() * COLORS.length)], 10, 7); }
+  drawPotato(dt, g, now);
+  if (Math.random() < dt * 8) burst(0, 2.6, 0, "#a8e4ff", 2, 2.2, 1.3, 0.7); // the fountain splashes
+  // the blast's shockwave ring
+  const bt = (pnow - local.blastAt) / 1000;
+  blastRing.visible = bt < 0.5; if (blastRing.visible) { blastRing.position.set(local.blastX, 0.08, local.blastZ); blastRing.scale.setScalar(1 + bt * CONFIG.blastRadius * 2.4); blastRing.material.opacity = 1 - bt * 2; }
+  fireball.visible = bt < 0.45; if (fireball.visible) { fireball.position.set(local.blastX, 1 + bt * 2, local.blastZ); fireball.scale.setScalar(0.6 + Math.sqrt(bt) * 4.5); fireball.material.opacity = 1 - bt / 0.45; fireball.material.color.set(bt < 0.12 ? "#fff3b0" : "#ff9a2e"); }
+  // camera: behind and above my critter (or the potato when I'm watching); ?attract circles the garden
+  const holderView = g.bomb ? (g.bomb.h === net.sessionId ? me.view : views.get(g.bomb.h)) : null;
+  const winView = g.phase === "results" && g.win && g.win !== net.sessionId ? views.get(g.win) : null;
+  const focus = amIn(g) ? me : winView && winView.g.visible ? winView : holderView && holderView.g.visible ? holderView : { x: 0, z: 0 };
+  if (ATTRACT) { // follow the potato from a slowly turning angle
+    const a = now / 9000, fx = potato.visible ? local.potX : local.blastX, fz = potato.visible ? local.potZ : local.blastZ;
+    camPos.set(fx * 0.85 + Math.sin(a) * 12, 12.5, fz * 0.85 + Math.cos(a) * 12); camera.position.lerp(camPos, 0.06); camLook.lerp(v3.set(fx, 0.5, fz), 0.1);
+  } else {
+    const far = camera.aspect < 1 ? 1.15 + 0.45 / Math.max(0.45, camera.aspect) : 1, f = amIn(g) ? 0.75 : 0.5;
+    camPos.set(focus.x * f, 16 * far, focus.z * f + 15 * far * (camera.aspect < 1 ? 0.55 : 1)); camLook.set(focus.x * f, 0, focus.z * f - 1); // steeper on a tall phone
+    camera.position.lerp(camPos, 1 - Math.pow(0.02, dt));
+  }
+  local.shake *= Math.exp(-dt * 5);
+  camera.lookAt(camLook);
+  if (local.shake > 0.01) camera.position.add(v3.set((Math.random() - 0.5) * local.shake, (Math.random() - 0.5) * local.shake, 0));
+  pointAtPotato(g);
+}
+/** The potato is off screen: a badge on the screen's edge shows which way it is. */
+function pointAtPotato(g) {
+  const el = $("arrow"), v = g.bomb && g.bomb.h !== net.sessionId ? views.get(g.bomb.h) : null;
+  if (!v || !v.g.visible || ATTRACT) { el.hidden = true; return; }
+  camera.updateMatrixWorld(); v3.set(v.x, 1, v.z).project(camera);
+  let x = v3.x, y = v3.y;
+  if (v3.z > 1) { x = -x; y = -y; } // behind the camera
+  const off = v3.z > 1 || Math.abs(x) > 0.92 || Math.abs(y) > 0.9;
+  el.hidden = !off; if (!off) return;
+  const k = 0.88 / Math.max(Math.abs(x), Math.abs(y), 0.01); x *= k; y *= k;
+  el.style.left = ((x + 1) / 2) * innerWidth + "px"; el.style.top = ((1 - y) / 2) * innerHeight + "px";
+}
+/** The potato over its holder's head: hops across on a pass, glows and ticks faster as the fuse runs out. */
+function drawPotato(dt, g, now) {
+  const B = g.bomb, v = B ? (B.h === net.sessionId ? me.view : views.get(B.h)) : null;
+  if (!B || !v || !v.g.visible) { potato.visible = glowRing.visible = false; return; }
+  const left = (B.b - Date.now()) / 1000, heat = Math.max(0, Math.min(1, 1 - left / 4)); // only the last 4 seconds show
+  const tx = v.x, ty = 2.75 + Math.sin(now / 120) * 0.08, tz = v.z;
+  if (!potato.visible) { local.potX = tx; local.potY = ty; local.potZ = tz; }
+  const k = 1 - Math.pow(0.00001, dt), hop = Math.hypot(tx - local.potX, tz - local.potZ);
+  local.potX += (tx - local.potX) * k; local.potZ += (tz - local.potZ) * k; local.potY = ty + Math.min(2, hop * 0.5);
+  potato.visible = glowRing.visible = true;
+  potato.position.set(local.potX, local.potY, local.potZ); potato.rotation.y = now / 300;
+  potato.scale.setScalar(1.35 * (1 + heat * 0.25 + Math.max(0, Math.sin(now / (160 - heat * 110))) * heat * 0.15));
+  spudMat.emissiveIntensity = heat * (0.6 + 0.4 * Math.sin(now / 50));
+  spark.scale.setScalar(0.7 + Math.random() * 0.8);
+  glowRing.position.set(v.x, 0.05, v.z); glowRing.material.opacity = 0.35 + 0.3 * Math.sin(now / (200 - heat * 150));
+  if (Math.random() < dt * 20) burst(local.potX + 0.25, local.potY + 0.7, local.potZ, Math.random() < 0.5 ? "#ffe066" : "#ff8c1a", 1, 1.5, 1, 0.4);
+  const tickEvery = 650 - (1 - Math.max(0, Math.min(1, left / 12))) * 520; // the ticking speeds up as it burns
+  if (performance.now() - local.lastTick > tickEvery) { local.lastTick = performance.now(); sfx("tick", 0.5 + heat); }
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("tag", (m, from) => { if (isHost() && m && typeof m === "object") onTag(m, from); });
+  net.on("again", () => { const g = game(); if (isHost() && g) playAgain(g); });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...parse(S.shared.bots, []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { seats: 8, startMs: 500, fuseMin: 2.6, fuseMax: 4, gapMs: 900, resultsMs: 2500 });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

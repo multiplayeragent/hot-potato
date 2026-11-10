@@ -1,0 +1,21 @@
+{
+  "name": "Hot Potato",
+  "genre": "party",
+  "dim": "3D",
+  "mode": "Party",
+  "players": "3–8",
+  "hook": "Pass the ticking potato. Don't hold it when it blows.",
+  "how": "Whoever holds the hot potato passes it by touching someone, and nobody knows when it will go off. Holding it at the bang knocks you out; the last one left wins.",
+  "controls": "WASD or arrow keys and Space to dash, or the touch stick and Dash button",
+  "uses": [
+    ["Host-run rounds", "The host's browser deals the potato, sets its fuse and decides every pass; if it leaves, the next player takes over."],
+    ["Bots", "Bots fill the garden until enough people join, and chase or run like players."],
+    ["Live sync", "Everyone sees the same potato in the same hands at the same moment."],
+    ["Leaderboard", "The players who won the most games, on the results card."]
+  ],
+  "ideas": [
+    "Make it a snowball fight in a snowy park",
+    "Add a second potato when there are lots of players",
+    "Add speed boots that appear on the grass"
+  ]
+}
