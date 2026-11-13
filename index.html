@@ -27,6 +27,7 @@
   .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
   .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; text-align: center; opacity: .8; } /* a message, not a ranked row */
   .card p { margin: 10px 0; font-size: 13px; opacity: .85; }
   button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd23f; color: #3a2410; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   #stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: #ffffff22; border: 2px solid #ffffff77; pointer-events: none; }
@@ -49,7 +50,7 @@
 <button id="dash" hidden>DASH</button>
 <div id="over" hidden><div class="card">
   <h2 id="title">Game over</h2><ol id="results"></ol>
-  <h3>Most wins</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Most wins</h3><ol id="board"><li class="note">Loading…</li></ol>
   <p id="next"></p>
   <button class="go" id="again">Play again</button>
 </div></div>
@@ -383,7 +384,8 @@ function blastPush(b, x, z) {
   b.vx = Math.cos(a) * f; b.vz = Math.sin(a) * f; b.stun = CONFIG.stunTime; b.dashT = 0;
   return true;
 }
-const spawnAt = (i, n) => { const a = -Math.PI / 2 + (i / Math.max(1, n)) * Math.PI * 2; return { x: Math.cos(a) * 11.5, z: Math.sin(a) * 11.5, h: Math.atan2(-Math.cos(a), -Math.sin(a)) }; };
+// Start spots round the garden; the first is not behind a barrel, so you can see yourself.
+const spawnAt = (i, n) => { const a = -Math.PI / 3 + (i / Math.max(1, n)) * Math.PI * 2; return { x: Math.cos(a) * 11.5, z: Math.sin(a) * 11.5, h: Math.atan2(-Math.cos(a), -Math.sin(a)) }; };
 const blocked = (x, z) => Math.hypot(x, z) > CONFIG.arenaR - 1.3 || OBSTACLES.some((o) => Math.hypot(x - o.x, z - o.z) < o.r + 0.8);
 
 // ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
@@ -644,12 +646,14 @@ function hud(g) {
   if (g.phase === "play" && toGo > 0) big = toGo > 3 ? "<small>Get ready</small>HOT POTATO" : String(Math.ceil(toGo));
   if (g.phase === "play" && toGo > 0 && toGo <= 3 && Math.ceil(toGo) !== local.lastBeep) { local.lastBeep = Math.ceil(toGo); sfx("beep"); }
   if (g.phase === "play" && toGo <= 0 && local.lastBeep > 0) { local.lastBeep = 0; sfx("go"); }
-  $("big").innerHTML = ATTRACT ? "" : big;
+  const bigHtml = ATTRACT || !big ? "" : `<div>${big}</div>`; // one block, so the small line stays on top of the big one
+  if ($("big").innerHTML !== bigHtml) $("big").innerHTML = bigHtml;
   if (ATTRACT) { $("top").textContent = $("msg").textContent = $("net").textContent = ""; return; }
   const holder = g.bomb?.h, mine = holder === net.sessionId;
   $("top").className = mine ? "hud hot" : "hud";
   $("top").innerHTML = g.phase === "results" ? "" : !holder ? `${toGo > 0 ? "The potato comes out soon" : "Next potato coming…"}<small>${left} left · last one standing wins</small>`
     : `${mine ? "🥔 YOU have the potato! Touch someone!" : `🥔 ${esc(rosterName(g, holder))} has the potato`}<small>${left} left · last one standing wins</small>`;
+  $("msg").style.top = $("top").getBoundingClientRect().bottom + 8 + "px"; // under the top line, however many lines it wraps to
   const watching = g.phase === "play" && !amIn(g);
   $("msg").textContent = watching ? (g.inRound.includes(net.sessionId) ? "You're out · watching until the next game" : "Watching · you join at the next potato")
     : performance.now() - startedAt < 15000 && g.phase === "play" ? (touchUI ? "Drag to run · tap DASH · don't hold the potato when it blows!" : "Run with WASD · Space to dash · don't hold the potato when it blows!") : "";
@@ -667,11 +671,11 @@ function results(g, now) {
 }
 function showBoard(won) {
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = "<li class='note'>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li class='note'>Loading…</li>";
   (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} 🏆</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} 🏆</span></li>`).join("") : "<li class='note'>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class='note'>Couldn't load the leaderboard.</li>"; });
 }
 $("again").onclick = () => { const g = game(); if (!g || g.phase !== "results") return; if (isHost()) playAgain(g); else net.send("again", {}); $("over").hidden = true; };
 const playAgain = (g) => { if (g.phase === "results") writeGame({ ...g, endsAt: Math.min(g.endsAt, Date.now() + 1200) }); };
@@ -695,6 +699,7 @@ addEventListener("keydown", (e) => {
   if (e.key === " " || e.key === "Shift") { e.preventDefault(); dashAt = performance.now(); }
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => keys.clear()); // keys held while switching away never get their keyup
 function readInput() {
   const k = (a, b) => (keys.has(a) || keys.has(b) ? 1 : 0);
   const mx = k("d", "arrowright") - k("a", "arrowleft") + stick.mx, mz = k("s", "arrowdown") - k("w", "arrowup") + stick.mz;
